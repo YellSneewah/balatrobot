@@ -8,6 +8,7 @@ from enum import Enum
 from gamestates import cache_state
 import subprocess
 import random
+import numpy as np
 
 
 class State(Enum):
@@ -73,12 +74,22 @@ class Bot:
         self.bot_port = bot_port
 
         self.addr = ("localhost", self.bot_port)
-        self.running = False
+        self.running = True
         self.balatro_instance = None
 
         self.sock = None
 
         self.state = {}
+        self.played_hand = None
+        self.hand_chips = 0
+        self.prev_chips = 0
+        self.starting = False
+
+        self.new_hand = []
+        self.done = False
+        self.truncated = False
+        self.reward = 0
+        self.info = {}
 
     def skip_or_select_blind(self):
         raise NotImplementedError(
@@ -119,7 +130,7 @@ class Bot:
 
     def start_balatro_instance(self):
         balatro_exec_path = (
-            r"C:\Program Files (x86)\Steam\steamapps\common\Balatro\Balatro.exe"
+            r"D:\Program Files\Steam\steamapps\common\Balatro\Balatro.exe"
         )
         self.balatro_instance = subprocess.Popen(
             [balatro_exec_path, str(self.bot_port)]
@@ -149,7 +160,7 @@ class Bot:
     def verifyimplemented(self):
         try:
             self.skip_or_select_blind(self, {})
-            self.select_cards_from_hand(self, {})
+            # self.select_cards_from_hand(self, {})
             self.select_shop_action(self, {})
             self.select_booster_action(self, {})
             self.sell_jokers(self, {})
@@ -168,25 +179,22 @@ class Bot:
         return "".join(random.choices("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ", k=7))
 
     def chooseaction(self):
-        if self.G["state"] == State.GAME_OVER:
-            self.running = False
-
         match self.G["waitingFor"]:
-            case "start_run":
-                seed = self.seed
-                if seed is None:
-                    seed = self.random_seed()
-                return [
-                    Actions.START_RUN,
-                    self.stake,
-                    self.deck,
-                    seed,
-                    self.challenge,
-                ]
+            # case "start_run":
+            #     seed = self.seed
+            #     if seed is None:
+            #         seed = self.random_seed()
+            #     return [
+            #         Actions.START_RUN,
+            #         self.stake,
+            #         self.deck,
+            #         seed,
+            #         self.challenge,
+            #     ]
             case "skip_or_select_blind":
                 return self.skip_or_select_blind(self, self.G)
-            case "select_cards_from_hand":
-                return self.select_cards_from_hand(self, self.G)
+            # case "select_cards_from_hand":
+            #     return self.select_cards_from_hand(self, self.G)
             case "select_shop_action":
                 return self.select_shop_action(self, self.G)
             case "select_booster_action":
@@ -202,22 +210,54 @@ class Bot:
             case "rearrange_hand":
                 return self.rearrange_hand(self, self.G)
 
-    def run_step(self):
-        if self.sock is None:
-            self.verifyimplemented()
-            self.state = {}
-            self.G = None
+    def one_hot_encode_hand(self, hand):
+        ranks = {'2':0, '3':1, '4':2, '5':3, '6':4, '7':5, '8':6, '9':7, 
+                 '10':8, 'Jack':9, 'Queen':10, 'King':11, 'Ace':12}  # Rank 1-13 mapped to 0-12
+        suits = {"Clubs": 0, "Diamonds": 1, "Hearts": 2, "Spades": 3}  # Suit mapped to 0-3
+        
+        encoded_hand = []
+        
+        for pos, card in enumerate(hand):
+            position_onehot = np.zeros(8)
+            position_onehot[pos] = 1  # One-hot encode position (0-7)
+            
+            rank_onehot = np.zeros(13)
+            rank_onehot[ranks[card["value"]]] = 1  # One-hot encode rank (0-12)
+            
+            suit_onehot = np.zeros(4)
+            suit_onehot[suits[card["suit"]]] = 1  # One-hot encode suit (0-3)
+            
+            encoded_card = np.concatenate([position_onehot, rank_onehot, suit_onehot])
+            encoded_hand.append(encoded_card)
+        return np.array(encoded_hand, dtype=np.int8)
+    
+    def calc_reward(self):
+        chips = self.G['chips']
+        blind_chips = self.G['current_round']["blind_chips"]
+        discards = self.G['current_round']['discards_left']
+        hands = self.G['current_round']['hands_left']
 
-            self.running = True
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.sock.settimeout(1)
-            self.sock.connect(self.addr)
+        if chips < blind_chips:
+            return ((chips - blind_chips) * discards + (chips * (hands + 1))) * self.played_hand
+        else:
+            return chips * (hands + 1) * self.played_hand
 
-        if self.running:
+        # return chips / blind_chips
+
+    def run(self):
+        while self.running:
+            if self.sock is None:
+                self.verifyimplemented()
+                self.state = {}
+                self.G = None
+
+                self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self.sock.settimeout(1)
+                self.sock.connect(self.addr)
+
             self.sendcmd("HELLO")
-
-            jsondata = {}
             try:
+                jsondata = {}
                 data = self.sock.recv(65536)
                 jsondata = json.loads(data)
 
@@ -227,19 +267,31 @@ class Bot:
                     self.G = jsondata
                     if self.G["waitingForAction"]:
                         cache_state(self.G["waitingFor"], self.G)
-                        action = self.chooseaction()
-                        if action == None:
-                            raise ValueError("All actions must return a value!")
 
-                        cmdstr = self.actionToCmd(action)
-                        self.sendcmd(cmdstr)
+
+                        if self.played_hand is not None and "blind_chips" in self.G['current_round'].keys():
+                            self.hand_chips = self.G["chips"] - self.prev_chips
+                            self.prev = self.G["chips"]
+
+                            self.reward = self.calc_reward()
+                        if self.G["waitingFor"] == "select_cards_from_hand":
+                            self.starting = False
+                            self.new_hand = self.one_hot_encode_hand(self.G["hand"])
+                            print(self.new_hand)
+                            return self.new_hand, self.reward, self.done, self.info
+                        if self.G["waitingFor"] == "start_run" and not self.done and not self.starting:
+                            self.done = True
+                            return self.new_hand, self.reward, self.done, self.info
+                        else:
+                            action = self.chooseaction()
+                            if action == None:
+                                raise ValueError("All actions must return a value!")
+
+                            cmdstr = self.actionToCmd(action)
+                            self.sendcmd(cmdstr)
             except socket.error as e:
                 print(e)
                 print("Socket error, reconnecting...")
                 self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 self.sock.settimeout(1)
                 self.sock.connect(self.addr)
-
-    def run(self):
-        while self.running:
-            self.run_step()

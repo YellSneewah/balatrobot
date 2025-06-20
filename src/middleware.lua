@@ -142,21 +142,174 @@ local function c_update()
         Middleware.currentaction = Middleware.add_event_sequence({{ func = _func_and_delay.func, delay = _func_and_delay.delay }})
     end
 
-    -- Run functions that have been waiting for a condition to be met
-    for i = 1, #Middleware.conditionalactions do
-        if Middleware.conditionalactions[i] then
-            local _result = {Middleware.conditionalactions[i].ready()}
-            local _ready = table.remove(_result, 1)
-            if _ready == true then
-                Middleware.conditionalactions[i].fire(unpack(_result))
-                Middleware.conditionalactions[i] = nil
-            end
+-- Process API action queue
+    if Botlogger and Botlogger.q_api and not List.isempty(Botlogger.q_api) then
+        local action_entry = List.popright(Botlogger.q_api)
+        if action_entry then
+            local action = action_entry[2]
+            execute_action(action)
         end
     end
 end
 
-function Middleware.c_play_hand()
+--- Executes an action based on the action type and parameters.
+--- @param action table The action to execute, in the format {action_type, ...}
+local function execute_action(action)
+    local action_type = action[1]
+    local params = {select(2, unpack(action))}
 
+    --- Validate action type
+    if not action_type or not Bot.ACTIONS[action_type] then
+        print("Invalid action type: " .. tostring(action_type))
+        return
+    end
+
+    --- Start Run
+    if action_type == Bot.ACTIONS.START_RUN then
+        -- params: [stake, deck, seed, challenge]
+        local stake = params[1] or 1
+        local deck = params[2] or "Red Deck"
+        local seed = params[3] or nil
+        local challenge = params[4] or nil
+
+        if G.STATE == G.STATES.GAME_OVER then
+            G.FUNCS.go_to_menu({})
+        end
+        Middlware.c_start_run(stake, deck, seed, challenge)
+
+----- Blinds -----
+    --- Select Blind
+    elseif action_type == Bot.ACTIONS.SELECT_BLIND then
+        -- params: [blind_index]
+        local blind_obj = G.blind_select_opts[string.lower(G.GAME.blind_on_deck)]
+        local select_button = blind_obj:get_UIE_by_ID('select_blind_button')
+        pushbutton(select_button)
+
+    --- Skip Blind
+    elseif action_type == Bot.ACTIONS.SKIP_BLIND then
+        
+        local blind_obj = G.blind_select_opts[string.lower(G.GAME.blind_on_deck)]
+        local skip_button = blind_obj:get_UIE_by_ID('tag_'..G.GAME.blind_on_deck).children[2]
+        pushbutton(skip_button)
+
+----- In Round -----
+    --- Play Hand
+    elseif action_type == Bot.ACTIONS.PLAY_HAND then
+        for i = 1, #params[1] do
+            clickcard(G.hand.cards[params[1][i]])
+        end
+        local play_button = UIBox:get_UIE_by_ID('play_button', G.buttons.UIRoot)
+        pushbutton(play_button)
+
+    --- Discard Hand
+    elseif action_type == Bot.ACTIONS.DISCARD_HAND then
+        for i = 1, #params[1] do
+            clickcard(G.hand.cards[params[1][i]])
+        end
+        local discard_button = UIBox:get_UIE_by_ID('discard_button', G.buttons.UIRoot)
+        pushbutton(discard_button)
+
+    --- Rearrange Hand
+    elseif action_type == Bot.ACTIONS.REARRANGE_HAND then
+        local cards = G.hand.cards
+        old_index = params[1]
+        new_index = params[2]
+        if not old_index or not new_index or old_index < 1 or old_index > #cards or new_index < 1 or new_index > #cards then
+            return -- Invalid indices
+        end
+        local card = table.remove(cards, old_index)
+        table.insert(cards, new_index, card)
+        G.hand:set_ranks()
+
+----- Shop -----
+
+    --- End Shop
+    elseif action_type == Bot.ACTIONS.END_SHOP then
+        pushbutton(Middleware.BUTTONS.NEXT_ROUND)
+
+    --- Reroll
+    elseif action_type == Bot.ACTIONS.REROLL_SHOP then
+        pushbutton(Middleware.BUTTONS.REROLL)
+
+    --- Buy Card
+    elseif action_type == Bot.ACTIONS.BUY_CARD then
+        local card = G.shop_jokers.cards[params[1][1]]
+        clickcard(card)
+        usecard(card)
+
+    --- Buy Voucher
+    elseif action_type == Bot.ACTIONS.BUY_VOUCHER then
+        local voucher = G.shop_vouchers.cards[params[1][1]]
+        clickcard(voucher)
+        usecard(voucher)
+
+    --- Buy Booster
+    elseif action_type == Bot.ACTIONS.BUY_BOOSTER then
+        local booster = G.shop_booster.cards[params[1][1]]
+        clickcard(booster)
+        usecard(booster)
+
+----- Booster Pack -----
+    --- Select Booster Card
+    elseif action_type == Bot.ACTIONS.SELECT_BOOSTER_CARD then
+        for i = 1, #params[2] do
+            clickcard(G.hand.cards[params[2][i]])
+        end
+        clickcard(G.pack_cards.cards[params[1][1]])
+        usecard(G.pack_cards.cards[params[1][1]])
+
+    --- Skip Booster Pack
+    elseif action_type == Bot.ACTIONS.SKIP_BOOSTER_PACK then
+        pushbutton(Middleware.BUTTONS.SKIP_PACK)
+
+----- Any Time -----        
+    --- Sell Joker
+    elseif action_type == Bot.ACTIONS.SELL_JOKER then
+        for i = 1, #params[1] do
+            clickcard(G.jokers.cards[params[1][i]])
+            usecard(G.jokers.cards[params[1][i]])
+        end
+
+    --- Rearrange Jokers
+    elseif action_type = Bot.REARRANGE_JOKERS then
+        local jokers = G.jokers.cards
+        old_index = params[1]
+        new_index = params[2]
+        if not old_index or not new_index or old_index < 1 or old_index > #jokers or new_index < 1 or new_index > #jokers then
+            return -- Invalid indices
+        end
+        local joker = table.remove(jokers, old_index)
+        table.insert(jokers, new_index, joker)
+        G.jokers:set_ranks()
+    
+    --- Use Consumable
+    elseif action_type == Bot.ACTIONS.USE_CONSUMABLE then
+        for i = 1, #params[1] do
+            clickcard(G.consumables.cards[params[1][i]])
+            usecard(G.consumables.cards[params[1][i]])
+        end
+
+    --- Rearrange Consumables
+    elseif action_type = Bot.REARRANGE_CONSUMABLES then
+        local consumables = G.consumables.cards
+        old_index = params[1]
+        new_index = params[2]
+        if not old_index or not new_index or old_index < 1 or old_index > #consumables or new_index < 1 or new_index > #consumables then
+            return -- Invalid indices
+        end
+        local consumable = table.remove(consumables, old_index)
+        table.insert(consumables, new_index, consumable)
+        G.consumables:set_ranks()
+
+    elseif action_type = Bot.SELL_CONSUMABLE then
+        
+    -- Add more action handlers as needed...
+    end
+end
+
+
+function Middleware.c_play_hand()
+ 
     firewhenready(function()
         local _action, _cards_to_play = Bot.select_cards_from_hand()
         if _action and _cards_to_play then
@@ -533,6 +686,8 @@ local function w_gamestate(...)
         Middleware.c_start_run()
     end
 end
+
+
 
 local function c_initgamehooks()
 

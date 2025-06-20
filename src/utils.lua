@@ -9,13 +9,34 @@ function Utils.getCardData(card)
     _card.suit = card.config.card.suit
     _card.value = card.config.card.value
     _card.card_key = card.config.card_key
+    _card.set = card.config.set
+    _card.cost = card.cost
+    _card.eternal = card.eternal
 
     return _card
 end
 
+function Utils.getBoosterData(booster)
+    local _booster = { }
+
+    _booster.kind = booster.kind
+    _booster.cost = booster.cost
+    _booster.options = booster.config.extra
+    _booster.choices = booster.config.choose
+
+    return _booster
+end
+
+
 function Utils.getDeckData()
     local _deck = { }
 
+    if G and G.deck and G.deck.cards then
+        for i = 1, #G.deck.cards do
+            local _card = Utils.getCardData(G.deck.cards[i])
+            _deck[i] = _card
+        end
+    end
     return _deck
 end
 
@@ -95,7 +116,7 @@ function Utils.getShopData()
     end
 
     for i = 1, #G.shop_booster.cards do
-        _shop.boosters[i] = Utils.getCardData(G.shop_booster.cards[i])
+        _shop.boosters[i] = Utils.getBoosterData(G.shop_booster.cards[i])
     end
 
     for i = 1, #G.shop_vouchers.cards do
@@ -107,6 +128,10 @@ end
 
 function Utils.getHandScoreData()
     local _handscores = { }
+
+    if G and G.GAME and G.GAME.chips then
+        _handscores = G.GAME.chips
+    end
 
     return _handscores
 end
@@ -122,8 +147,11 @@ function Utils.getRoundData()
 
     if G and G.GAME and G.GAME.current_round then
         _current_round.discards_left = G.GAME.current_round.discards_left
+        _current_round.hands_left = G.GAME.current_round.hands_left
     end
-
+    if G and G.GAME and G.GAME.blind then
+        _current_round.blind_chips = G.GAME.blind.chips
+    end
     return _current_round
 end
 
@@ -141,7 +169,8 @@ function Utils.getGameData()
         _game.dollars = G.GAME.dollars
         _game.max_jokers = G.GAME.max_jokers
         _game.bankrupt_at = G.GAME.bankrupt_at
-        _game.chips = _game.chips
+        _game.required_chips = G.GAME.chips
+        _game.won = G.GAME.won
     end
 
     return _game

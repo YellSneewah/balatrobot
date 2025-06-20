@@ -26,16 +26,16 @@ Bot.ACTIONS = {
 
 Bot.ACTIONPARAMS = { }
 Bot.ACTIONPARAMS[Bot.ACTIONS.SELECT_BLIND] = {
-    num_args = 1,
-    func = "skip_or_select_blind",
+    num_args = 0,
+    func = "select_blind",
     isvalid = function(action)
         if G.STATE == G.STATES.BLIND_SELECT then return true end
         return false
     end,
 }
 Bot.ACTIONPARAMS[Bot.ACTIONS.SKIP_BLIND] = {
-    num_args = 1,
-    func = "skip_or_select_blind",
+    num_args = 0,
+    func = "skip_blind",
     isvalid = function(action)
         if G.STATE == G.STATES.BLIND_SELECT then return true end
         return false
@@ -169,7 +169,7 @@ Bot.ACTIONPARAMS[Bot.ACTIONS.SKIP_BOOSTER_PACK] = {
 }
 Bot.ACTIONPARAMS[Bot.ACTIONS.SELL_JOKER] = {
     num_args = 2,
-    func = "sell_jokers",
+    func = "sell_joker",
     isvalid = function(action)
         if G and G.jokers and G.jokers.cards then
             if not action[2] then return true end
@@ -284,19 +284,19 @@ Bot.SETTINGS = {
     api = true,
 }
 
---- Skips or selects the current blind
----@param blind string
---      One of 'Small', 'Big', 'Boss'
+--- Skips the current blind
+
 ---@return number Return
 --      Bot.ACTIONS.SELECT_BLIND or Bot.ACTIONS.SKIP_BLIND
-function Bot.skip_or_select_blind(blind)
-    if blind == 'Small' or blind == 'Big' then
-        return Bot.ACTIONS.SKIP_BLIND
-    end
-
+function Bot.skip_or_select_blind()
     return Bot.ACTIONS.SELECT_BLIND
 end
 
+--- Select 1 for play, 2 for discard
+---@param action integer
+
+--- Selected cards to act on
+--- @param cards table
 --- Selects cards from the current hand and plays or discards them
 ---@return integer
 --      Bot.ACTIONS.PLAY_HAND or Bot.ACTIONS.DISCARD_HAND
@@ -304,7 +304,7 @@ end
 --      { G.hand.cards[1], G.hand.cards[2], G.hand.cards[3] }
 
 local num_hand = 0
-function Bot.select_cards_from_hand()
+function Bot.select_cards_from_hand(action)
 
     num_hand = num_hand + 1
 
@@ -355,7 +355,6 @@ function Bot.select_shop_action(choices)
     return Bot.ACTIONS.END_SHOP
 end
 
-
 -- Returns one of the following ACTIONS, card to pick, and deck cards to pick if applicable
 --      SELECT_BOOSTER_CARD
 --      SKIP_BOOSTER_PACK
@@ -377,29 +376,35 @@ function Bot.select_booster_action(pack_cards, hand_cards)
     return Bot.ACTIONS.SKIP_BOOSTER_PACK
 end
 
-function Bot.sell_jokers()
-    if #G.jokers.cards > 1 then
-        return Bot.ACTIONS.SELL_JOKER, { 2 }
-    end
+
+--- Index of the joker you would like to sell
+---@param joker integer
+--  Index of 
+---@return card
+--      
+-- ex. return Bot.ACTIONS.BUY_CARD, choices[Bot.ACTIONS.BUY_CARD][1]
+function Bot.sell_joker(joker)
+    return Bot.ACTIONS.SELL_JOKER, { joker }
+    
 end
 
--- Return the action and indices of how the jokers should be rearranged
--- ex. return Bot.ACTIONS.REARRANGE_JOKERS, { 2, 1, 3  }
-function Bot.rearrange_jokers()
-    --return Bot.ACTIONS.REARRANGE_JOKERS, { 2, 1 }
-end
+-- -- Return the action and indices of how the jokers should be rearranged
+-- -- ex. return Bot.ACTIONS.REARRANGE_JOKERS, { 2, 1, 3  }
+-- function Bot.rearrange_jokers()
+--     --return Bot.ACTIONS.REARRANGE_JOKERS, { 2, 1 }
+-- end
 
-function Bot.use_or_sell_consumables()
+-- function Bot.use_or_sell_consumables()
 
-end
+-- end
 
-function Bot.rearrange_consumables()
+-- function Bot.rearrange_consumables()
 
-end
+-- end
 
 -- Return the full new order of the hand
 function Bot.rearrange_hand()
-    --return Bot.ACTIONS.REARRANGE_HAND, { 2, 1, 3, 4, 5, 6, 7, 8 }
+    return Bot.ACTIONS.REARRANGE_HAND, { 2, 1, 3, 4, 5, 6, 7, 8 }
 end
 
 function Bot.start_run()
