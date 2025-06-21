@@ -77,29 +77,30 @@ class Bot:
         self.addr = ("localhost", self.bot_port)
         self.balatro_instance = None
 
-        self.state = {}
-        self.played_hand = None
-        self.hand_chips = 0
-        self.prev_chips = 0
-        self.starting = False
-
-        self.new_hand = []
-        self.done = False
-        self.truncated = False
-        self.reward = 0
-        self.info = {}
+        self.sock = None
+        self.running = False
 
     # Any Time Actions
     def use_consumable(self, consumable):
         return [Actions.USE_CONSUMABLE, [consumable]]
     
-    def rearrange_consumables(self, order):
+    def rearrange_consumables(self, num_consumables, consumable_index, new_index):
+        """
+        Rearranges the consumables list by moving the item at consumable_index to new_index.
+        Returns the new order as a list of indexes.
+        """
+        order = list(range(num_consumables))
+        item = order.pop(consumable_index)
+        order.insert(new_index, item)
         return [Actions.REARRANGE_CONSUMABLES, [order]]
     
     def sell_consumable(self, consumable):
         return [Actions.SELL_CONSUMABLE, [consumable]]
     
-    def rearrange_jokers(self, order):
+    def rearrange_jokers(self, num_jokers, joker_index, new_index):
+        order = list(range(num_jokers))
+        item = order.pop(joker_index)
+        order.insert(new_index, item)
         return [Actions.REARRANGE_JOKERS, [order]]
     
     def sell_jokers(self, joker):
@@ -112,7 +113,10 @@ class Bot:
     def discard_hand(self, cards):
         return [Actions.DISCARD_HAND, [cards]]
     
-    def rearrange_hand(self, order):
+    def rearrange_hand(self, num_in_hand, card_index, new_index):
+        order = list(range(num_in_hand))
+        item = order.pop(card_index)
+        order.insert(new_index, item)
         return [Actions.REARRANGE_HAND, [order]]
 
     def next_round(self):
@@ -215,10 +219,10 @@ class Bot:
         return chips
 
     def get_state(self):
-        self.send_cmd("HELLO")
         while True:
+            self.send_cmd("HELLO")
+            jsondata = {}
             try:
-                jsondata = {}
                 data = self.sock.recv(65536)
                 jsondata = json.loads(data)
                 if "response" in jsondata:

@@ -171,6 +171,7 @@ function Utils.getGameData()
         _game.bankrupt_at = G.GAME.bankrupt_at
         _game.required_chips = G.GAME.chips
         _game.won = G.GAME.won
+
     end
 
     return _game

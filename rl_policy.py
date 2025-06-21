@@ -1,7 +1,7 @@
 import gymnasium.spaces as spaces
 import gymnasium as gym
 from rl_bot import Bot, Actions, State
-from stable_baselines3 import PPO
+from stable_baselines3.common.env_checker import check_env
 
 from sb3_contrib.common.maskable.policies import MaskableActorCriticPolicy
 from sb3_contrib.common.wrappers import ActionMasker
@@ -32,6 +32,9 @@ class BalatroEnv(gym.Env):
         self.max_vouchers = max_vouchers
         self.max_shop_cards = 4
 
+    
+
+
         self.action_vector = [
             6,                                # any_time_action (# No Action, Use Consumable, Rearrange Consumable, Sell Consumable, Rearrange Joker, Sell Joker)
             self.max_consumables,             # selected_consumable
@@ -55,46 +58,28 @@ class BalatroEnv(gym.Env):
 
         self.action_space = spaces.MultiDiscrete(self.action_vector)
 
-        self.action_space = spaces.Dict({
-            "any_time_action": spaces.Discrete(6),                              # No Action, Use Consumable, Rearrange Consumable, Sell Consumable, Rearrange Joker, Sell Joker
-            "selected_consumable": spaces.Discrete(max_consumables),    
-            "new_consumable_index": spaces.Discrete(max_consumables), # New order for the consumables
-            "selected_joker": spaces.Discrete(max_jokers),    
-            "new_joker_index": spaces.Discrete(max_jokers),       # New placement for the joker
-            "round_action": spaces.Discrete(3),                                 # Play, Discard, Rearrange Cards
-            "selected_cards" : spaces.Dict({
-            "selected_card_1": spaces.Discrete(max_handsize),    
-            "selected_card_2": spaces.Discrete(max_handsize + 1),               # +1 for the case of no card selected
-            "selected_card_3": spaces.Discrete(max_handsize + 1),               # +1 for the case of no card selected
-            "selected_card_4": spaces.Discrete(max_handsize + 1),               # +1 for the case of no card selected
-            "selected_card_5": spaces.Discrete(max_handsize + 1),               # +1 for the case of no card selected
-            }),
-            "selected_card_rearrange": spaces.Discrete(max_handsize),
-            "new_card_index": spaces.Discrete(max_handsize),  # Order of the cards in the hand
-            "shop_action": spaces.Discrete(7),                                  # Next Round, Reroll, Buy Card, Buy & Use Card, Buy Voucher, Buy Booster 1, Buy Booster 2
-            "shop_slot": spaces.Discrete(self.max_shop_cards),
-            "voucher_slot": spaces.Discrete(max_vouchers),                      # Useful when voucher skip used
-            "booster_action": spaces.Discrete(6),                               # Skip, Use 1, Use 2, Use 3, Use 4, Use 5
-            "blind_select": spaces.Discrete(2)                                  # Play, Skip
-        })
-
-        self.action_space = spaces.flatten_space(self.action_space)
-
         # Example for using image as input (channel-first; channel-last also works):
         self.observation_space = spaces.Dict(spaces = {
             "state": spaces.Discrete(len(State)),
-            "money": spaces.Box(low=0, high=1000, shape=(1,), dtype = np.float32),
-            "score": spaces.Box(low=0, high=1000000, shape=(1,), dtype = np.float32)
+            "dollars": spaces.Box(low=0, high=1000, shape=(1,), dtype = np.int32),
+            "score": spaces.Box(low=0, high=1000000, shape=(1,), dtype = np.int32)
         })
 
         
         self.bot = bot_init()
 
+        self.deck = "Red Deck"
+        self.stake = 1
+        self.seed = self.bot.random_seed()
+        self.challenge = None
+
         # Variables
-        self.state = None
+        self.state = self.bot.get_state()
+
+        
 
     def step(self, action):
-        action = self.unflatten_action(action)
+        action = unflatten_action(action)
         match action["any_time_action"]:
             case 0: 
                 # No Action
@@ -112,8 +97,10 @@ class BalatroEnv(gym.Env):
 
             case 2:
                 # Rearrange Consumables
-                order = action["consumable_order"]
-                selected_action = self.bot.rearrange_consumables(order)
+                consumable = action["selected_consumable"]
+                new_index = action["new_consumable_index"]
+                num_consumables = len(self.state["consumables"])
+                selected_action = self.bot.rearrange_consumables(num_consumables, consumable, new_index)
 
             case 3: 
                 # Sell Consumable
@@ -134,7 +121,8 @@ class BalatroEnv(gym.Env):
                 if joker >= self.max_jokers:
                     raise ValueError("Selected joker out of range")
                 # Implement logic to rearrange the joker
-                selected_action = self.bot.rearrange_joker(joker, placement)
+                num_jokers = len(self.state["jokers"])
+                selected_action = self.bot.rearrange_joker(num_jokers, joker, placement)
 
             case 5:
                 # Sell Joker
@@ -165,11 +153,10 @@ class BalatroEnv(gym.Env):
 
             case 2:
                 # Rearrange Hand
-                card = action["rearrange_start"]
-                new_index = action["rearrange_end"]
-                
-
-                selected_action = self.bot.rearrange_hand(order)
+                num_in_hand = len(self.state["hand"])
+                card = action["selected_card_index"]
+                new_index = action["new_card_index"]
+                selected_action = self.bot.rearrange_hand(num_in_hand, card, new_index)
 
         match action["shop_action"]:
             case 0:
@@ -242,49 +229,44 @@ class BalatroEnv(gym.Env):
         terminated = self.state["game_over"]
         truncated = False  # Balatro does not have a time limit, so this is always False
         info = {
-            "game_over": self.state["game_over"],
             "reward": reward,
-            "state": self.state
+            "state": self.state,
+            "seed": self.seed
         }
         
-        observation= self.state
+        observation = state_to_obs(self.state)
         return observation, reward, terminated, truncated, info
     
     def valid_action_mask(self):
         actions = {
-            "any_time_action": np.zeros(6, dtype=bool),                                 # No Action, Use Consumable, Rearrange Consumable, Sell Consumable, Rearrange Joker, Sell Joker
-            "selected_consumable": np.zeros(self.max_consumables, dtype=bool),    
-            "new_consumable_index": np.zeros(self.max_consumables, dtype=bool), # New order for the consumables
-            "selected_joker": np.zeros(self.max_jokers, dtype=bool),    
-            "new_joker_index": np.zeros(self.max_jokers, dtype=bool),
-            "round_action": np.zeros(3, dtype=bool),                                    # Play, Discard, Rearrange Cards
-            "selected_cards": {
-            "selected_card_1": np.zeros(self.max_handsize, dtype=bool),    
-            "selected_card_2": np.zeros(self.max_handsize + 1, dtype=bool),             # +1 for the case of no card selected
-            "selected_card_3": np.zeros(self.max_handsize + 1, dtype=bool),             # +1 for the case of no card selected
-            "selected_card_4": np.zeros(self.max_handsize + 1, dtype=bool),             # +1 for the case of no card selected
-            "selected_card_5": np.zeros(self.max_handsize + 1, dtype=bool),             # +1 for the case of no card selected
-            },
-            "selected_card_rearrange": np.zeros(self.max_handsize, dtype=bool),
-            "new_card_index": np.zeros(self.max_handsize, dtype=bool), # Order of the cards in the hand
-            "shop_action": np.zeros(7, dtype=bool),                                     # Next Round, Reroll, Buy Card, Buy & Use Card, Buy Voucher, Buy Booster 1, Buy Booster 2
-            "shop_slot": np.zeros(4, dtype=bool),
-            "voucher_slot": np.zeros(self.max_vouchers, dtype=bool),                    # Useful when voucher skip used
-            "booster_action": np.zeros(6, dtype=bool),                                  # Skip, Use 1, Use 2, Use 3, Use 4, Use 5
-            "blind_select": np.zeros(2, dtype=bool)
+            "any_time_action": [False] * 6,                                 # No Action, Use Consumable, Rearrange Consumable, Sell Consumable, Rearrange Joker, Sell Joker
+            "selected_consumable": [False] * self.max_consumables,    
+            "new_consumable_index": [False] * self.max_consumables,         # New order for the consumables
+            "selected_joker": [False] * self.max_jokers,   
+            "new_joker_index": [False] * self.max_jokers,
+            "round_action": [False] * 3,                                     # Play, Discard, Rearrange Cards
+            "selected_card_1": [False] * self.max_handsize,    
+            "selected_card_2": [False] * (self.max_handsize + 1),             # +1 for the case of no card selected
+            "selected_card_3": [False] * (self.max_handsize + 1),             # +1 for the case of no card selected
+            "selected_card_4": [False] * (self.max_handsize + 1),             # +1 for the case of no card selected
+            "selected_card_5": [False] * (self.max_handsize + 1),             # +1 for the case of no card selected
+            "selected_card_index": [False] * self.max_handsize,
+            "new_card_index": [False] * self.max_handsize,                  # Order of the cards in the hand
+            "shop_action": [False] * 7,                                     # Next Round, Reroll, Buy Card, Buy & Use Card, Buy Voucher, Buy Booster 1, Buy Booster 2
+            "shop_slot": [False] * 4,
+            "voucher_slot": [False] * self.max_vouchers,                    # Useful when voucher skip used
+            "booster_action": [False] * 6,                                  # Skip, Use 1, Use 2, Use 3, Use 4, Use 5
+            "blind_select": [False] * 2
         }
         G = self.state
-        money = G["dollars"]
-        bankrupt_at = G["bankrupt_at"]
         state = G["state"]
         shop = G["shop"]
         jokers = G["jokers"]
-        current_round = G[""]
         hand = G["hand"]
         consumables = G["consumables"]
 
         # All Time Action | No Action, Use Consumable, Rearrange Consumable, Sell Consumable, Rearrange Joker, Sell Joker
-        if self.state == (State.SELECTING_HAND or State.HAND_PLAYED or State.DRAW_TO_HAND or State.SHOP or State.PLAY_TAROT or State.BLIND_SELECT or State.ROUND_EVAL or State.PLANET_PACK):
+        if state == (State.SELECTING_HAND or State.HAND_PLAYED or State.DRAW_TO_HAND or State.SHOP or State.PLAY_TAROT or State.BLIND_SELECT or State.ROUND_EVAL or State.PLANET_PACK):
 
             # Can always do no action
             can_no_action = True
@@ -315,16 +297,17 @@ class BalatroEnv(gym.Env):
             
 
         # In Round Actions
-        if self.state == State.SELECTING_HAND:
+        if state == State.SELECTING_HAND:
             # Can always play hand
             can_play = True
 
             # Each selection has num_cards in hand choices, duplicates are ignored.
-            selection_mask = {}
-            for selection in actions["selected_cards"]:
-                selection_mask[selection] = self.true_list(len(hand), selection)
             
-            actions["selected_cards"] = selection_mask
+            actions["selected_card_1"] = self.true_list(len(hand), self.max_handsize)
+            for i in range(2, 6):
+                actions["selected_card_" + i] = self.true_list(len(hand), self.max_handsize + 1)
+                actions["selected_card_" + i][-1] = True
+            
 
 
             # Discard hand
@@ -351,7 +334,7 @@ class BalatroEnv(gym.Env):
                 can_reroll = True
 
             # Buy and Buy and Use Card
-            can_buy_cards = np.zeros(self.max_shop_cards, dtype = bool)
+            can_buy_cards = [False] * self.max_shop_cards
             for card, i in enumerate(shop["cards"]):
                 if self.can_afford(card, True):
                     if (card["set"] == "Joker"):
@@ -392,45 +375,23 @@ class BalatroEnv(gym.Env):
                 can_skip_blind = False
             actions["blind_select"] = [can_select_blind, can_skip_blind]
 
-            
 
-        return actions
+        print(flatten_actions(actions))
+        return flatten_actions(actions)
     
-    def unflatten_action(vec):
-        it = iter(vec)
-        return {
-            "any_time_action":      next(it),
-            "selected_consumable":  next(it),
-            "new_consumable_index": next(it),
-            "selected_joker":       next(it),
-            "new_joker_index":      next(it),
-            "round_action":         next(it),
-            "selected_cards": {
-                f"selected_card_{i+1}": next(it)
-                for i in range(5)
-            },
-            "selected_card_rearrange": next(it),
-            "new_card_index":         next(it),
-            "shop_action":            next(it),
-            "shop_slot":              next(it),
-            "voucher_slot":           next(it),
-            "booster_action":         next(it),
-            "blind_select":           next(it),
-        }
 
 
-
+    
 
     def reset(self, seed=None, options=None):
-        self.bot.send_cmd(self.bot.action_to_cmd(Actions.START_RUN, deck = "red deck", stake = 1, seed = self.bot.random_seed()))
+        self.bot.send_cmd(self.bot.action_to_cmd([Actions.START_RUN, "Red Deck", 1, self.bot.random_seed()]))
         self.state = self.bot.get_state()
         if self.state is None:
             raise RuntimeError("Failed to get initial state from Balatro")
         print("Resetting... Ended at state:", self.state)
-        observation = self.state
+        observation = state_to_obs(self.state)
     
         info = {
-            "game_over": self.state["game_over"],
             "reward": 0,
             "state": self.state
         }
@@ -459,12 +420,50 @@ class BalatroEnv(gym.Env):
         bool_list.append([False] * (list - num))
         return bool_list 
 
+def flatten_actions(actions: dict):
+    #Converts a dictionary of lists into a list of lists.
+    output_list = []
+    for value in actions.values():
+      output_list.append(value)
+    return output_list
+
+def unflatten_action(vec):
+    it = iter(vec)
+    return {
+        "any_time_action":      next(it),
+        "selected_consumable":  next(it),
+        "new_consumable_index": next(it),
+        "selected_joker":       next(it),
+        "new_joker_index":      next(it),
+        "round_action":         next(it),
+        "selected_card_1":      next(it),
+        "selected_card_2":      next(it),
+        "selected_card_3":      next(it),
+        "selected_card_4":      next(it),
+        "selected_card_5":      next(it),
+        "selected_card_index":  next(it),
+        "new_card_index":       next(it),
+        "shop_action":          next(it),
+        "shop_slot":            next(it),
+        "voucher_slot":         next(it),
+        "booster_action":       next(it),
+        "blind_select":         next(it),
+    }
+
+def state_to_obs(state):
+    obs = {}
+    obs["state"] = state["state"]
+    obs["dollars"] = state["dollars"]
+    obs["score"] = state["handscores"]
+    return obs
+
 def init_bot():
     # mybot = Bot(deck="Plasma Deck", stake=1, seed="1OGB5WO")
     mybot = Bot(deck = "Red Deck", stake = 1)
     mybot.start_balatro_instance()
+
     mybot.running = False
-    while not mybot.running:
+    while mybot.sock == None:
         mybot.state = {}
         mybot.G = None
 
@@ -476,8 +475,25 @@ def init_bot():
 
     return mybot
 
+# test_dict = {
+#     "gaming":[True, True, True],
+#     "gaming 2":[False, False, False],
+#     "test":[False],
+#     "embedded_dict": {
+#         "embed 1": [True, True],
+#         "embed 2": [False]
+#     }
+# }
+
+# test_dict["test"] = True
+
+# print(test_dict.values())
+
+
 env = BalatroEnv(init_bot, max_consumables=5, max_jokers=10, max_handsize=12, max_vouchers=1)
-env = gym.wrappers.FlattenObservation(env)
 env = ActionMasker(env, mask_fn)
+env = gym.wrappers.FlattenObservation(env)
+
+
 model = MaskablePPO(MaskableActorCriticPolicy, env)
 model.learn(total_timesteps=10000)

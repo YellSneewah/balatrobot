@@ -271,7 +271,7 @@ local function execute_action(action)
         end
 
     --- Rearrange Jokers
-    elseif action_type = Bot.REARRANGE_JOKERS then
+    elseif action_type == Bot.REARRANGE_JOKERS then
         local jokers = G.jokers.cards
         old_index = params[1]
         new_index = params[2]
@@ -290,7 +290,7 @@ local function execute_action(action)
         end
 
     --- Rearrange Consumables
-    elseif action_type = Bot.REARRANGE_CONSUMABLES then
+    elseif action_type == Bot.REARRANGE_CONSUMABLES then
         local consumables = G.consumables.cards
         old_index = params[1]
         new_index = params[2]
@@ -301,7 +301,7 @@ local function execute_action(action)
         table.insert(consumables, new_index, consumable)
         G.consumables:set_ranks()
 
-    elseif action_type = Bot.SELL_CONSUMABLE then
+    elseif action_type == Bot.SELL_CONSUMABLE then
         
     -- Add more action handlers as needed...
     end
